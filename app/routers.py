@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from . import services
@@ -14,6 +14,11 @@ from .schemas import (
     EventBatchIn,
     FreezeIn,
     ImportResult,
+    InboxApproveIn,
+    InboxBatchIn,
+    InboxBatchOut,
+    InboxDiffOut,
+    InboxRejectIn,
     PlanIn,
     PlanOut,
     SnapshotOut,
@@ -160,3 +165,114 @@ def get_diff(
         )
     except (services.PlanNotFoundError, services.FreezeNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/plans/{plan_version}/inbox/batches",
+    response_model=InboxBatchOut,
+)
+def upload_inbox_batch(
+    plan_version: str,
+    body: InboxBatchIn,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> Any:
+    """上传迟到批次：校验、去重、影响模拟后进入隔离收件箱。"""
+    try:
+        result, created = services.upload_inbox_batch(
+            db,
+            plan_version=plan_version,
+            batch_id=body.batch_id,
+            source=body.source,
+            events=body.events,
+        )
+    except services.PlanNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except services.BatchPayloadMismatchError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    response.status_code = (
+        status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    )
+    return result
+
+
+@router.get(
+    "/plans/{plan_version}/inbox/batches/{batch_id}",
+    response_model=InboxBatchOut,
+)
+def read_inbox_batch(
+    plan_version: str, batch_id: str, db: Session = Depends(get_db)
+) -> Any:
+    """预览批次：校验报告、影响模拟与审批结果。"""
+    try:
+        return services.get_inbox_batch_view(db, plan_version, batch_id)
+    except (services.PlanNotFoundError, services.BatchNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/plans/{plan_version}/inbox/batches/{batch_id}/diff",
+    response_model=InboxDiffOut,
+)
+def read_inbox_batch_diff(
+    plan_version: str, batch_id: str, db: Session = Depends(get_db)
+) -> Any:
+    """差异查询：批次被接纳后会影响哪些学生与冻结快照。"""
+    try:
+        return services.inbox_batch_diff(db, plan_version, batch_id)
+    except (services.PlanNotFoundError, services.BatchNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/plans/{plan_version}/inbox/batches/{batch_id}/approve",
+    response_model=InboxBatchOut,
+)
+def approve_inbox_batch(
+    plan_version: str,
+    batch_id: str,
+    body: InboxApproveIn | None = None,
+    db: Session = Depends(get_db),
+) -> Any:
+    """批准批次：通过校验的事件原子写入正式事件流。"""
+    actor = body.actor if body else None
+    note = body.note if body else ""
+    try:
+        result, _ = services.approve_inbox_batch(
+            db,
+            plan_version=plan_version,
+            batch_id=batch_id,
+            actor=actor,
+            note=note,
+        )
+    except (services.PlanNotFoundError, services.BatchNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except services.BatchStateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return result
+
+
+@router.post(
+    "/plans/{plan_version}/inbox/batches/{batch_id}/reject",
+    response_model=InboxBatchOut,
+)
+def reject_inbox_batch(
+    plan_version: str,
+    batch_id: str,
+    body: InboxRejectIn,
+    db: Session = Depends(get_db),
+) -> Any:
+    """拒绝批次：保留摘要与理由，事件不参与重放。"""
+    try:
+        result, _ = services.reject_inbox_batch(
+            db,
+            plan_version=plan_version,
+            batch_id=batch_id,
+            reason=body.reason,
+            actor=body.actor,
+        )
+    except (services.PlanNotFoundError, services.BatchNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except services.BatchStateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return result

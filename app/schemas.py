@@ -138,3 +138,51 @@ class DiffOut(BaseModel):
     new_event_cutoff_id: str | None
     student_changes: list[dict[str, Any]]
     students_affected: int
+
+
+class InboxBatchIn(BaseModel):
+    """隔离收件箱上传请求：事件按原样接收，结构错误进入批次报告而非整体拒绝。"""
+
+    batch_id: str = Field(..., min_length=1, max_length=128)
+    source: str | None = Field(None, max_length=256)
+    events: list[Any] = Field(default_factory=list)
+
+
+class InboxApproveIn(BaseModel):
+    actor: str | None = Field(None, max_length=128)
+    note: str = Field("", max_length=512)
+
+
+class InboxRejectIn(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=512)
+    actor: str | None = Field(None, max_length=128)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("reason must not be blank")
+        return v
+
+
+class InboxBatchOut(BaseModel):
+    plan_version: str
+    batch_id: str
+    status: str
+    source: str | None
+    content_hash: str
+    validation: dict[str, Any]
+    preview: dict[str, Any]
+    decision: dict[str, Any] | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class InboxDiffOut(BaseModel):
+    plan_version: str
+    batch_id: str
+    status: str
+    students_affected: int
+    student_changes: list[dict[str, Any]]
+    freezes_affected: list[dict[str, Any]]
