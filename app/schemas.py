@@ -138,3 +138,49 @@ class DiffOut(BaseModel):
     new_event_cutoff_id: str | None
     student_changes: list[dict[str, Any]]
     students_affected: int
+
+
+class InboxBatchIn(BaseModel):
+    """隔离收件箱上传体。events 允许任意结构，由服务端逐条校验并回报。"""
+
+    batch_id: str = Field(..., min_length=1, max_length=128)
+    source: str = Field("", max_length=128)
+    events: list[Any] = Field(default_factory=list)
+
+
+class InboxDecisionIn(BaseModel):
+    actor: str = Field(..., min_length=1, max_length=128)
+
+
+class InboxRejectIn(BaseModel):
+    actor: str = Field(..., min_length=1, max_length=128)
+    reason: str = Field(..., min_length=1, max_length=1024)
+
+
+class InboxBatchOut(BaseModel):
+    plan_version: str
+    batch_id: str
+    source: str
+    status: str
+    summary: dict[str, Any]
+    impact: dict[str, Any]
+    decision: dict[str, Any] | None
+    rule_signature: str | None
+    created_at: datetime | None
+    decided_at: datetime | None
+    returned_existing: bool = False
+
+
+class InboxDiffOut(BaseModel):
+    plan_version: str
+    batch_id: str
+    status: str
+    rules: dict[str, Any] | None
+    baseline_event_cutoff_id: str | None
+    frozen_snapshots: list[dict[str, Any]]
+    frozen_snapshots_remain_immutable: bool
+    submitted_student_ids: list[str]
+    student_changes: list[dict[str, Any]]
+    students_affected: int
+    stale: bool
+    decision: dict[str, Any] | None

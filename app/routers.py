@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from . import services
@@ -14,6 +14,11 @@ from .schemas import (
     EventBatchIn,
     FreezeIn,
     ImportResult,
+    InboxBatchIn,
+    InboxBatchOut,
+    InboxDecisionIn,
+    InboxDiffOut,
+    InboxRejectIn,
     PlanIn,
     PlanOut,
     SnapshotOut,
@@ -160,3 +165,119 @@ def get_diff(
         )
     except (services.PlanNotFoundError, services.FreezeNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# 隔离收件箱：迟到批次的上传、预览、批准、拒绝与差异查询
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/plans/{plan_version}/inbox",
+    response_model=InboxBatchOut,
+)
+def upload_inbox_batch(
+    plan_version: str,
+    body: InboxBatchIn,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> Any:
+    try:
+        result, created = services.upload_inbox_batch(
+            db,
+            plan_version=plan_version,
+            batch_id=body.batch_id,
+            source=body.source,
+            raw_events=body.events,
+        )
+    except services.PlanNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    response.status_code = (
+        status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    )
+    return result
+
+
+@router.get(
+    "/plans/{plan_version}/inbox/{batch_id}",
+    response_model=InboxBatchOut,
+)
+def preview_inbox_batch(
+    plan_version: str, batch_id: str, db: Session = Depends(get_db)
+) -> Any:
+    try:
+        return services.get_inbox_batch_view(db, plan_version, batch_id)
+    except services.PlanNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except services.InboxBatchNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/plans/{plan_version}/inbox/{batch_id}/diff",
+    response_model=InboxDiffOut,
+)
+def get_inbox_batch_diff(
+    plan_version: str, batch_id: str, db: Session = Depends(get_db)
+) -> Any:
+    try:
+        return services.get_inbox_batch_diff(db, plan_version, batch_id)
+    except services.PlanNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except services.InboxBatchNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/plans/{plan_version}/inbox/{batch_id}/approve",
+    response_model=InboxBatchOut,
+)
+def approve_inbox_batch(
+    plan_version: str,
+    batch_id: str,
+    body: InboxDecisionIn,
+    db: Session = Depends(get_db),
+) -> Any:
+    try:
+        return services.approve_inbox_batch(
+            db,
+            plan_version=plan_version,
+            batch_id=batch_id,
+            actor=body.actor,
+        )
+    except services.PlanNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except services.InboxBatchNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except services.InboxDecisionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except services.InboxBatchAlreadyDecidedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/plans/{plan_version}/inbox/{batch_id}/reject",
+    response_model=InboxBatchOut,
+)
+def reject_inbox_batch(
+    plan_version: str,
+    batch_id: str,
+    body: InboxRejectIn,
+    db: Session = Depends(get_db),
+) -> Any:
+    try:
+        return services.reject_inbox_batch(
+            db,
+            plan_version=plan_version,
+            batch_id=batch_id,
+            actor=body.actor,
+            reason=body.reason,
+        )
+    except services.PlanNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except services.InboxBatchNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except services.InboxDecisionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except services.InboxBatchAlreadyDecidedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

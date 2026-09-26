@@ -69,3 +69,33 @@ class Freeze(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow, server_default=func.now()
     )
+
+
+class InboxBatch(Base):
+    """隔离收件箱批次：迟到事件先校验、去重、模拟影响，审批后才进入正式事件流。"""
+
+    __tablename__ = "inbox_batches"
+
+    plan_version: Mapped[str] = mapped_column(String(128), primary_key=True)
+    batch_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    source: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    events: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    impact: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    decision: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    rule_signature: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, server_default=func.now()
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected')",
+            name="ck_inbox_batches_status",
+        ),
+        Index("ix_inbox_batches_plan_status", "plan_version", "status"),
+    )
